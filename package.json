@@ -8,7 +8,9 @@
   },
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "build": "npm install",
+    "railway:start": "node server.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.3",

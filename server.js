@@ -29,7 +29,7 @@ app.use(express.json());
 app.use(cors({
   origin: [
     "http://localhost:3000",
-    "https://your-frontend-domain.com", // Tambahkan domain frontend Anda
+    "https://frontend-kejaksaan-production.up.railway.app" // Tambahkan domain frontend Railway
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
