@@ -27,13 +27,11 @@ const io = socketIo(server, {
 
 app.use(express.json());
 app.use(cors({
-  origin: [
-    "http://localhost:3000",
-    "https://frontend-kejaksaan-production.up.railway.app"
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: false
+  origin: ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true,
+  maxAge: 86400
 }));
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -142,13 +140,12 @@ const verifyAdmin = (req, res, next) => {
 // Gunakan validateLogin middleware untuk endpoint login
 app.post('/api/auth/login', validateLogin, async (req, res) => {
   const { email, password } = req.body;
-  console.log('Login attempt for:', email);
+  console.log('Login attempt for email:', email);
   
   try {
     const result = await query('SELECT * FROM users WHERE email = $1', [email]);
     
     if (result.rows.length === 0) {
-      console.log('User not found:', email);
       return res.status(401).json({ 
         success: false,
         error: "Email atau password salah" 
@@ -159,7 +156,6 @@ app.post('/api/auth/login', validateLogin, async (req, res) => {
     const validPassword = await bcrypt.compare(password, user.password);
     
     if (!validPassword) {
-      console.log('Invalid password for user:', email);
       return res.status(401).json({ 
         success: false,
         error: "Email atau password salah" 
@@ -172,7 +168,11 @@ app.post('/api/auth/login', validateLogin, async (req, res) => {
       { expiresIn: '1h' }
     );
 
-    console.log('Login successful for:', email);
+    console.log('Login successful:', {
+      username: user.username,
+      role: user.role
+    });
+
     res.json({ 
       success: true,
       token, 
@@ -438,17 +438,6 @@ app.get('/api/cases', verifyToken, async (req, res) => {
     const { type } = req.query;
     const userId = req.user.userId;
 
-    // Log untuk debugging
-    console.log('Fetching cases for:', { userId, type });
-
-    // Cek struktur tabel
-    const tableInfo = await pool.query(`
-      SELECT column_name, data_type 
-      FROM information_schema.columns 
-      WHERE table_name = 'cases'
-    `);
-    console.log('Table structure:', tableInfo.rows);
-
     const query = `
       SELECT 
         c.id,
@@ -459,6 +448,8 @@ app.get('/api/cases', verifyToken, async (req, res) => {
         c.type,
         c.user_id,
         c.created_at,
+        c.witnesses,
+        c.prosecutor,
         u.username as created_by_username
       FROM cases c
       LEFT JOIN users u ON c.created_by = u.id
@@ -471,7 +462,7 @@ app.get('/api/cases', verifyToken, async (req, res) => {
     if (type) values.push(type);
 
     const result = await pool.query(query, values);
-    console.log(`Found ${result.rows.length} cases`);
+    console.log(`Found ${result.rows.length} cases with data:`, result.rows);
 
     res.json(result.rows);
   } catch (err) {
@@ -522,32 +513,32 @@ app.get('/api/cases/:id', verifyToken, async (req, res) => {
 });
 
 app.post('/api/cases', verifyToken, async (req, res) => {
-  const { title, date, description, parties, type } = req.body;
-  console.log('Adding new case:', { title, date, type }, 'User ID:', req.user.userId);
+  const { title, date, description, parties, type, witnesses, prosecutor } = req.body;
+  console.log('Adding new case:', { title, date, type, witnesses, prosecutor }, 'User ID:', req.user.userId);
+  
   try {
     const result = await query(
-      'INSERT INTO cases (title, date, description, parties, type, user_id, notification_sent, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-      [title, date, description, parties, type, req.user.userId, false, req.user.userId]
+      `INSERT INTO cases (
+        title, date, description, parties, type, 
+        user_id, notification_sent, created_by,
+        witnesses, prosecutor
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+      RETURNING *`,
+      [
+        title, 
+        date, 
+        description, 
+        parties, 
+        type, 
+        req.user.userId, 
+        false, 
+        req.user.userId,
+        witnesses,
+        prosecutor
+      ]
     );
-    console.log('New case added successfully:', result.rows[0]);
-
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
     
-    const scheduleDate = new Date(date);
-    scheduleDate.setHours(0, 0, 0, 0);
-
-    if (scheduleDate.getTime() === tomorrow.getTime()) {
-      const notificationMessage = `Jangan Lupa untuk jadwal Besok: ${type} ${formatDate(date)}`;
-      await sendAndSaveNotification(req.user.userId, notificationMessage, result.rows[0].id);
-      
-      await query(
-        'UPDATE cases SET notification_sent = true WHERE id = $1',
-        [result.rows[0].id]
-      );
-    }
-
+    console.log('New case added successfully:', result.rows[0]);
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error('Error adding new case:', err);
