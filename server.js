@@ -16,17 +16,9 @@ const { verifyToken, validateLogin, handleAuthError } = require('./middleware/au
 
 const app = express();
 const server = http.createServer(app);
-
-const allowedOrigins = [
-  "http://localhost:3000", 
-  "http://localhost:3001", 
-  "http://localhost:3002",
-  "https://frontend-kejaksaan-production.up.railway.app" // Tambahkan URL frontend production
-];
-
 const io = socketIo(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true
@@ -35,23 +27,12 @@ const io = socketIo(server, {
 
 app.use(express.json());
 app.use(cors({
-  origin: function(origin, callback) {
-    // Izinkan requests tanpa origin (seperti mobile apps atau curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'CORS policy tidak mengizinkan akses dari origin ini.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
+  origin: ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
   maxAge: 86400
 }));
-
-app.options('*', cors());
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -493,92 +474,26 @@ app.get('/api/cases', verifyToken, async (req, res) => {
   }
 });
 
-app.get('/api/cases/:id', verifyToken, async (req, res) => {
-  const client = await pool.connect();
-  try {
-    const { id } = req.params;
-    console.log('=== DETAIL KASUS REQUEST ===');
-    console.log('ID yang diminta:', id);
-    console.log('User:', req.user);
-
-    const query = `
-      SELECT 
-        c.*,
-        u.username as created_by_username,
-        to_char(c.date, 'YYYY-MM-DD') as formatted_date
-      FROM cases c
-      LEFT JOIN users u ON c.created_by = u.id
-      WHERE c.id = $1 AND c.user_id = $2
-    `;
-
-    const result = await client.query(query, [id, req.user.userId]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        error: "Kasus tidak ditemukan"
-      });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error fetching case detail:', error);
-    res.status(500).json({
-      error: "Terjadi kesalahan saat mengambil detail kasus",
-      message: error.message
-    });
-  } finally {
-    client.release();
-  }
-});
-
-app.post('/api/cases', verifyToken, async (req, res) => {
+app.put('/api/cases/:id', verifyToken, async (req, res) => {
   const { title, date, description, parties, type, witnesses, prosecutor } = req.body;
-  console.log('Adding new case:', { title, date, type, witnesses, prosecutor }, 'User ID:', req.user.userId);
+  console.log('Updating case:', req.params.id, { title, date, type, witnesses, prosecutor }, 'User ID:', req.user.userId);
   
   try {
     const result = await query(
-      `INSERT INTO cases (
-        title, date, description, parties, type, 
-        user_id, notification_sent, created_by,
-        witnesses, prosecutor
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
-      RETURNING *`,
-      [
-        title, 
-        date, 
-        description, 
-        parties, 
-        type, 
-        req.user.userId, 
-        false, 
-        req.user.userId,
-        witnesses,
-        prosecutor
-      ]
+      `UPDATE cases 
+       SET title = $1, date = $2, description = $3, parties = $4, type = $5, 
+           witnesses = $6, prosecutor = $7 
+       WHERE id = $8 AND user_id = $9 
+       RETURNING *`,
+      [title, date, description, parties, type, witnesses, prosecutor, req.params.id, req.user.userId]
     );
-    
-    console.log('New case added successfully:', result.rows[0]);
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    console.error('Error adding new case:', err);
-    res.status(500).json({ error: 'Terjadi kesalahan server saat menambah kasus baru' });
-  }
-});
 
-app.put('/api/cases/:id', verifyToken, async (req, res) => {
-  const { title, date, description, parties, type } = req.body;
-  console.log('Updating case:', req.params.id, { title, date, type }, 'User ID:', req.user.userId);
-  try {
-    const result = await query(
-      'UPDATE cases SET title = $1, date = $2, description = $3, parties = $4, type = $5 WHERE id = $6 AND user_id = $7 RETURNING *',
-      [title, date, description, parties, type, req.params.id, req.user.userId]
-    );
     if (result.rows.length === 0) {
       console.log('Case not found for update:', req.params.id);
       return res.status(404).json({ error: 'Kasus tidak ditemukan' });
     }
+    
     console.log('Case updated successfully:', result.rows[0]);
-
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error updating case:', err);
