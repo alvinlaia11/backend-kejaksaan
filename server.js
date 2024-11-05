@@ -181,6 +181,52 @@ const verifyAdmin = (req, res, next) => {
   next();
 };
 
+const checkPendingNotifications = async (userId) => {
+  const client = await pool.connect();
+  try {
+    // Ambil semua kasus yang belum dinotifikasi dan jadwalnya H-1
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+
+    const result = await client.query(`
+      SELECT c.* 
+      FROM cases c
+      WHERE c.user_id = $1 
+      AND DATE(c.date) = DATE($2)
+      AND c.notification_sent = false
+    `, [userId, tomorrow]);
+
+    console.log(`Found ${result.rows.length} pending notifications for user ${userId}`);
+
+    for (const caseData of result.rows) {
+      try {
+        const formattedDate = formatDate(caseData.date);
+        const message = `Reminder: Kasus "${caseData.title}" dijadwalkan untuk besok (${formattedDate})`;
+        
+        await sendAndSaveNotification(userId, message, caseData.id);
+        
+        // Update status notification_sent
+        await client.query(
+          'UPDATE cases SET notification_sent = true WHERE id = $1',
+          [caseData.id]
+        );
+
+        console.log(`Notification sent for case ${caseData.id}`);
+      } catch (err) {
+        console.error(`Error processing notification for case ${caseData.id}:`, err);
+      }
+    }
+
+    return result.rows.length; // Return jumlah notifikasi yang dikirim
+  } catch (error) {
+    console.error('Error checking pending notifications:', error);
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
 // Gunakan validateLogin middleware untuk endpoint login
 app.post('/api/auth/login', validateLogin, async (req, res) => {
   const { email, password } = req.body;
@@ -213,7 +259,13 @@ app.post('/api/auth/login', validateLogin, async (req, res) => {
     );
 
     // Cek notifikasi yang pending setelah login berhasil
-    await checkPendingNotifications(user.id);
+    try {
+      const notificationCount = await checkPendingNotifications(user.id);
+      console.log(`Sent ${notificationCount} notifications for user ${user.id}`);
+    } catch (notifError) {
+      console.error('Error checking notifications:', notifError);
+      // Lanjutkan proses login meskipun ada error pada notifikasi
+    }
 
     console.log('Login successful:', {
       username: user.username,
