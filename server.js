@@ -843,6 +843,68 @@ const startServer = async () => {
   }
 };
 
+// Fungsi untuk memeriksa jadwal kasus dan mengirim notifikasi
+const checkUpcomingCases = async () => {
+  try {
+    // Ambil kasus yang jadwalnya H-1 dari sekarang
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+
+    const result = await query(`
+      SELECT c.*, u.id as user_id 
+      FROM cases c
+      JOIN users u ON c.user_id = u.id
+      WHERE DATE(c.date) = DATE($1)
+      AND c.notification_sent = false
+    `, [tomorrow]);
+
+    console.log(`Checking ${result.rows.length} upcoming cases for notifications`);
+
+    for (const caseData of result.rows) {
+      try {
+        // Format tanggal untuk pesan
+        const formattedDate = formatDate(caseData.date);
+        
+        // Buat pesan notifikasi
+        const message = `Reminder: Kasus "${caseData.title}" dijadwalkan untuk besok (${formattedDate})`;
+        
+        // Kirim dan simpan notifikasi
+        await sendAndSaveNotification(caseData.user_id, message, caseData.id);
+        
+        // Update status notification_sent
+        await query(
+          'UPDATE cases SET notification_sent = true WHERE id = $1',
+          [caseData.id]
+        );
+
+        console.log(`Notification sent for case ${caseData.id}`);
+      } catch (err) {
+        console.error(`Error processing notification for case ${caseData.id}:`, err);
+      }
+    }
+  } catch (err) {
+    console.error('Error checking upcoming cases:', err);
+  }
+};
+
+// Jalankan pengecekan setiap jam
+schedule.scheduleJob('0 * * * *', checkUpcomingCases);
+
+// Jalankan pengecekan saat server pertama kali start
+checkUpcomingCases();
+
+// Tambahkan endpoint untuk memaksa cek notifikasi (untuk testing)
+app.post('/api/check-notifications', verifyToken, async (req, res) => {
+  try {
+    await checkUpcomingCases();
+    res.json({ message: 'Notification check triggered successfully' });
+  } catch (err) {
+    console.error('Error triggering notification check:', err);
+    res.status(500).json({ error: 'Failed to check notifications' });
+  }
+});
+
 startServer();
 
 module.exports = {
