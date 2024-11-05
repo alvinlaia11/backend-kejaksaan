@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Kejaksaan Backend
 
 Backend service for Kejaksaan application.
@@ -27,3 +28,6 @@ Make sure to set these environment variables in Railway:
 4. Deploy
 
 ## Development 
+=======
+# backend-kejaksaan
+>>>>>>> 61c0c9d40e3b4cc6f9e445ca06662e77e568153c
