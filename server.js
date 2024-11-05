@@ -27,9 +27,9 @@ const io = socketIo(server, {
 
 app.use(express.json());
 app.use(cors({
-  origin: ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"],
+  origin: ["http://localhost:3000"],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
   maxAge: 86400
 }));
@@ -471,6 +471,80 @@ app.get('/api/cases', verifyToken, async (req, res) => {
       error: 'Terjadi kesalahan server',
       details: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
+  }
+});
+
+app.get('/api/cases/:id', verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { id } = req.params;
+    console.log('=== DETAIL KASUS REQUEST ===');
+    console.log('ID yang diminta:', id);
+    console.log('User:', req.user);
+
+    const query = `
+      SELECT 
+        c.*,
+        u.username as created_by_username,
+        to_char(c.date, 'YYYY-MM-DD') as formatted_date
+      FROM cases c
+      LEFT JOIN users u ON c.created_by = u.id
+      WHERE c.id = $1 AND c.user_id = $2
+    `;
+
+    const result = await client.query(query, [id, req.user.userId]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "Kasus tidak ditemukan"
+      });
+    }
+
+    console.log('Response data:', result.rows[0]);
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching case detail:', error);
+    res.status(500).json({
+      error: "Terjadi kesalahan saat mengambil detail kasus",
+      message: error.message
+    });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/cases', verifyToken, async (req, res) => {
+  const { title, date, description, parties, type, witnesses, prosecutor } = req.body;
+  console.log('Adding new case:', { title, date, type, witnesses, prosecutor }, 'User ID:', req.user.userId);
+  
+  try {
+    const result = await query(
+      `INSERT INTO cases (
+        title, date, description, parties, type, 
+        user_id, notification_sent, created_by,
+        witnesses, prosecutor
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
+      RETURNING *`,
+      [
+        title, 
+        date, 
+        description, 
+        parties, 
+        type, 
+        req.user.userId, 
+        false, 
+        req.user.userId,
+        witnesses,
+        prosecutor
+      ]
+    );
+    
+    console.log('New case added successfully:', result.rows[0]);
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('Error adding new case:', err);
+    res.status(500).json({ error: 'Terjadi kesalahan server saat menambah kasus baru' });
   }
 });
 
