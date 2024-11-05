@@ -108,11 +108,14 @@ io.on('connection', (socket) => {
 });
 
 const sendAndSaveNotification = async (userId, message, caseId) => {
+  const client = await pool.connect();
   try {
-    // Cek apakah notifikasi sudah ada
-    const existingNotif = await query(
-      'SELECT * FROM notifications WHERE user_id = $1 AND case_id = $2',
-      [userId, caseId]
+    // Cek apakah notifikasi untuk kasus ini sudah ada
+    const existingNotif = await client.query(
+      `SELECT * FROM notifications 
+       WHERE case_id = $1 AND user_id = $2 
+       AND DATE(created_at) = CURRENT_DATE`,
+      [caseId, userId]
     );
 
     if (existingNotif.rows.length > 0) {
@@ -120,28 +123,52 @@ const sendAndSaveNotification = async (userId, message, caseId) => {
       return null;
     }
 
+    // Hitung schedule_date (H-1)
+    const caseResult = await client.query(
+      'SELECT date FROM cases WHERE id = $1',
+      [caseId]
+    );
+    
+    if (caseResult.rows.length === 0) {
+      throw new Error('Case not found');
+    }
+
+    const caseDate = new Date(caseResult.rows[0].date);
+    const scheduleDate = new Date(caseDate);
+    scheduleDate.setDate(scheduleDate.getDate() - 1);
+
     // Simpan notifikasi baru
-    const result = await query(
-      'INSERT INTO notifications (user_id, case_id, message, is_read, is_sent) VALUES ($1, $2, $3, false, true) RETURNING *',
-      [userId, caseId, message]
+    const result = await client.query(
+      `INSERT INTO notifications 
+       (user_id, message, case_id, is_read, is_sent, schedule_date, type) 
+       VALUES ($1, $2, $3, false, true, $4, 'reminder') 
+       RETURNING *`,
+      [userId, message, caseId, scheduleDate]
     );
     
     const notification = result.rows[0];
     console.log('New notification created:', notification);
 
-    // Kirim notifikasi melalui socket
+    // Kirim notifikasi melalui socket jika user online
     const userSocket = userSockets.get(userId);
     if (userSocket) {
       console.log('Sending notification through socket to user:', userId);
-      userSocket.emit('notification', notification);
+      userSocket.emit('notification', {
+        ...notification,
+        title: 'Pengingat Jadwal',
+        message: message,
+        type: 'reminder'
+      });
     } else {
       console.log('User socket not found for user:', userId);
     }
 
     return notification;
   } catch (error) {
-    console.error('Error saving and sending notification:', error);
+    console.error('Error in sendAndSaveNotification:', error);
     throw error;
+  } finally {
+    client.release();
   }
 };
 
@@ -184,6 +211,9 @@ app.post('/api/auth/login', validateLogin, async (req, res) => {
       JWT_SECRET,
       { expiresIn: '1h' }
     );
+
+    // Cek notifikasi yang pending setelah login berhasil
+    await checkPendingNotifications(user.id);
 
     console.log('Login successful:', {
       username: user.username,
