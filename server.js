@@ -16,9 +16,17 @@ const { verifyToken, validateLogin, handleAuthError } = require('./middleware/au
 
 const app = express();
 const server = http.createServer(app);
+
+const allowedOrigins = [
+  "http://localhost:3000", 
+  "http://localhost:3001", 
+  "http://localhost:3002",
+  "https://frontend-kejaksaan-production.up.railway.app" // Tambahkan URL frontend production
+];
+
 const io = socketIo(server, {
   cors: {
-    origin: ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"],
+    origin: allowedOrigins,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true
@@ -27,12 +35,23 @@ const io = socketIo(server, {
 
 app.use(express.json());
 app.use(cors({
-  origin: ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"],
+  origin: function(origin, callback) {
+    // Izinkan requests tanpa origin (seperti mobile apps atau curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'CORS policy tidak mengizinkan akses dari origin ini.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   credentials: true,
   maxAge: 86400
 }));
+
+app.options('*', cors());
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
