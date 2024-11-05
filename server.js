@@ -51,8 +51,6 @@ app.use(cors({
   maxAge: 86400
 }));
 
-app.options('*', cors());
-
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Tambahkan ini setelah konfigurasi CORS
@@ -459,19 +457,9 @@ app.get('/api/cases', verifyToken, async (req, res) => {
 
     const query = `
       SELECT 
-        c.id,
-        c.title,
-        c.date,
-        c.description,
-        c.parties,
-        c.type,
-        c.user_id,
-        c.created_at,
-        c.witnesses,
-        c.prosecutor,
-        u.username as created_by_username
+        c.*,
+        COALESCE(c.status, 'Menunggu') as status
       FROM cases c
-      LEFT JOIN users u ON c.created_by = u.id
       WHERE c.user_id = $1
       ${type ? 'AND LOWER(c.type) = LOWER($2)' : ''}
       ORDER BY c.date DESC
@@ -497,15 +485,12 @@ app.get('/api/cases/:id', verifyToken, async (req, res) => {
   const client = await pool.connect();
   try {
     const { id } = req.params;
-    console.log('=== DETAIL KASUS REQUEST ===');
-    console.log('ID yang diminta:', id);
-    console.log('User:', req.user);
-
     const query = `
       SELECT 
         c.*,
         u.username as created_by_username,
-        to_char(c.date, 'YYYY-MM-DD') as formatted_date
+        to_char(c.date, 'YYYY-MM-DD') as formatted_date,
+        COALESCE(c.status, 'Menunggu') as status
       FROM cases c
       LEFT JOIN users u ON c.created_by = u.id
       WHERE c.id = $1 AND c.user_id = $2
@@ -518,8 +503,6 @@ app.get('/api/cases/:id', verifyToken, async (req, res) => {
         error: "Kasus tidak ditemukan"
       });
     }
-
-    console.log('Response data:', result.rows[0]);
 
     res.json(result.rows[0]);
   } catch (error) {
@@ -722,6 +705,34 @@ app.use((err, req, res, next) => {
     error: 'Internal Server Error',
     message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
   });
+});
+
+// Tambahkan endpoint untuk update status
+app.put('/api/cases/:id/status', verifyToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { status } = req.body;
+    const { id } = req.params;
+    
+    console.log('Updating status:', { id, status, userId: req.user.userId });
+
+    const result = await client.query(
+      'UPDATE cases SET status = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+      [status, id, req.user.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Kasus tidak ditemukan' });
+    }
+
+    console.log('Status updated successfully:', result.rows[0]);
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating status:', error);
+    res.status(500).json({ error: 'Gagal mengubah status' });
+  } finally {
+    client.release();
+  }
 });
 
 function formatDate(dateString) {
