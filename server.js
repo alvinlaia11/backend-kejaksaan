@@ -415,30 +415,31 @@ app.post('/api/users', verifyToken, verifyAdmin, async (req, res) => {
 app.put('/api/users/:id', verifyToken, async (req, res) => {
   const { username, email, password, position, phone, office } = req.body;
   const userId = req.params.id;
+  const client = await pool.connect();
 
   try {
-    let query, params;
+    let queryText, queryParams;
     
     if (password) {
       const hashedPassword = await bcrypt.hash(password, 10);
-      query = `
+      queryText = `
         UPDATE users 
         SET username = $1, email = $2, password = $3, position = $4, phone = $5, office = $6 
         WHERE id = $7 AND role != 'admin'
         RETURNING id, username, email, position, phone, office
       `;
-      params = [username, email, hashedPassword, position, phone, office, userId];
+      queryParams = [username, email, hashedPassword, position, phone, office, userId];
     } else {
-      query = `
+      queryText = `
         UPDATE users 
         SET username = $1, email = $2, position = $3, phone = $4, office = $5 
         WHERE id = $6 AND role != 'admin'
         RETURNING id, username, email, position, phone, office
       `;
-      params = [username, email, position, phone, office, userId];
+      queryParams = [username, email, position, phone, office, userId];
     }
 
-    const result = await query(query, params);
+    const result = await client.query(queryText, queryParams);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
@@ -449,6 +450,8 @@ app.put('/api/users/:id', verifyToken, async (req, res) => {
   } catch (err) {
     console.error('Error updating user:', err);
     res.status(500).json({ error: 'Gagal memperbarui pengguna' });
+  } finally {
+    client.release();
   }
 });
 
