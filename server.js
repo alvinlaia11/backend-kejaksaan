@@ -418,6 +418,13 @@ app.put('/api/users/:id', verifyToken, async (req, res) => {
   const client = await pool.connect();
 
   try {
+    // Verifikasi role admin
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ 
+        error: 'Hanya admin yang dapat mengedit pengguna' 
+      });
+    }
+
     let queryText, queryParams;
     
     if (password) {
@@ -425,7 +432,7 @@ app.put('/api/users/:id', verifyToken, async (req, res) => {
       queryText = `
         UPDATE users 
         SET username = $1, email = $2, password = $3, position = $4, phone = $5, office = $6 
-        WHERE id = $7 AND role != 'admin'
+        WHERE id = $7
         RETURNING id, username, email, position, phone, office
       `;
       queryParams = [username, email, hashedPassword, position, phone, office, userId];
@@ -433,7 +440,7 @@ app.put('/api/users/:id', verifyToken, async (req, res) => {
       queryText = `
         UPDATE users 
         SET username = $1, email = $2, position = $3, phone = $4, office = $5 
-        WHERE id = $6 AND role != 'admin'
+        WHERE id = $6
         RETURNING id, username, email, position, phone, office
       `;
       queryParams = [username, email, position, phone, office, userId];
@@ -487,26 +494,26 @@ app.delete('/api/users/:id', verifyToken, async (req, res) => {
 
     // 3. Hapus notifications
     await client.query(
-      'DELETE FROM notifications WHERE user_id = $1 OR case_id IN (SELECT id FROM cases WHERE user_id = $1)',
+      'DELETE FROM notifications WHERE user_id = $1',
       [userId]
     );
 
     // 4. Hapus cases
     await client.query(
-      'DELETE FROM cases WHERE user_id = $1 OR created_by = $1',
+      'DELETE FROM cases WHERE user_id = $1',
       [userId]
     );
 
-    // 5. Hapus user
+    // 5. Hapus user tanpa memeriksa role
     const result = await client.query(
-      'DELETE FROM users WHERE id = $1 AND role != $2 RETURNING id, username',
-      [userId, 'admin']
+      'DELETE FROM users WHERE id = $1 RETURNING id, username',
+      [userId]
     );
 
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({
-        error: 'Pengguna tidak ditemukan atau tidak dapat dihapus'
+        error: 'Pengguna tidak ditemukan'
       });
     }
 
